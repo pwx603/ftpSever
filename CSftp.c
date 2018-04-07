@@ -50,9 +50,9 @@ int sendingPath( int  descriptor, char * file , uint32_t offset){
 }
 
 /**
- *
+ * sendingFiles, reads the file byte by byte using fread, and then sends info to the descriptor socket
  * @param descriptor
- * @param f
+ * @param f - file name
  * @return
  */
 int sendingFiles(int descriptor, FILE *f){
@@ -60,10 +60,10 @@ int sendingFiles(int descriptor, FILE *f){
   int n, ret = 0;
 
   while((n = fread(filebuf, 1, 1024, f))>0){
-    int st = send (descriptor, filebuf, n , 0);
+    int st = send (descriptor, filebuf, n , 0); // send buffer holding the info
 
     if(st<0){
-      ret = -1;
+      ret = -1;   //if cannot send, return -1
       break;
     }else{
       filebuf[n] = 0;
@@ -91,7 +91,7 @@ int main(int argc, char **argv) {
     usage(argv[0]);
     return -1;
   }
-
+  // 1st argument is port number
   portNumber = atoi(argv[1]);
 
 
@@ -128,7 +128,7 @@ int main(int argc, char **argv) {
 
   c = sizeof(struct sockaddr_in);
 
-
+  // accepts connection from client
   while ((clientStock = accept(serverSock, (struct sockaddr *) &client, (socklen_t *) &c))>=0) {
 
     puts("Connection accepted");
@@ -161,47 +161,59 @@ int main(int argc, char **argv) {
   return 0;
 
 }
-
+/**
+ * handles the connection (control connection at first), handles all the RFC commands
+ * @param serverSock - socket that is being listened
+ * @return
+ */
 void *connectionHandler( void * serverSock){
 
-  int sock = *(int*)serverSock;
+  int mainSocket = *(int*)serverSock;   //dereference
   int readSize;
 
   struct sockaddr_in serverAddr;
   int serverAddrLen = sizeof(serverAddr);
 
   /*
-   *  getsockname () return the current address to which the sock is bound
+   *  getsockname () return the current address to which the mainSocket is bound
    */
-  getsockname(sock, (struct sockaddr*)&serverAddr,&serverAddrLen );
+  getsockname(mainSocket, (struct sockaddr*)&serverAddr,&serverAddrLen );
 
+
+
+  // initialize some string to hold inputs and parameters
+  char* message, clientMessage[2000],command[4], parameter[1000];
+  // keeps track of states
+  int loggedIn = 0, streamMode = 0, fsType = 0, asciiType = 0, passiveMode = 0;
 
   int dataClient = -1;
   struct sockaddr_in dataClientAdrr;
-  int dataClientLen = sizeof(dataClientAdrr);
-
-  char cwd[1024], parent[1024];
-
-  char* message, clientMessage[2000],command[4], parameter[1000];
-
-  int loggedIn = 0, asciiType = 0, streamMode = 0, fsType = 0, passiveMode = 0;
-
-  int pasvPort, pasvSock;
+  int dataClientLength = sizeof(dataClientAdrr);
   struct sockaddr_in pasvServer;
+  int pasvPort, pasvSocket;
 
-  getcwd(parent,sizeof(parent));
+
+  char parentDir[1024];
+
+  char cwdDir[1024];
+
+
+
+  //gets path and name of current (meaning parentDir) working directory
+  getcwd(parentDir,sizeof(parentDir));
 
 
   // send the first message
   message = "220 - Welcome to FTP server. This server only supports the username: cs317\n";
-  write(sock, message, strlen(message));
+  write(mainSocket, message, strlen(message));
 
-  while((readSize = recv(sock, clientMessage, 2000, 0))>0){
+  while((readSize = recv(mainSocket, clientMessage, 2000, 0))>0){
 
+    // Gets client command
     sscanf(clientMessage,"%s",command );
 
     //message = strcat(command, "\n");
-
+    // Debug: Prints command received from Client side
     puts(command);
     puts("\n");
 
@@ -214,16 +226,15 @@ void *connectionHandler( void * serverSock){
           loggedIn = 1;
 
           message = "230 - Login successful\n";
-          write(sock, message, strlen(message));
-          //    sendStr(sock,"230 - Login successful\n" );
+          write(mainSocket, message, strlen(message));  //sends message/output to client through the mainSocket
 
         }else{
           message = "530 - This server only supports the username: cs317\n";
-          write(sock, message, strlen(message));
+          write(mainSocket, message, strlen(message));
         }
       }else{
         message = "530 - Can't change from cs317\n";
-        write(sock, message, strlen(message));
+        write(mainSocket, message, strlen(message));
       }
     }else if(strcasecmp(command,"TYPE")== 0){
 
@@ -232,39 +243,39 @@ void *connectionHandler( void * serverSock){
         sscanf(clientMessage,"%s",parameter);
 
         if(strcasecmp(parameter,"A")==0){
-
+          // allow setting to ASCII mode, not fully implemented
           if (asciiType == 0){
             asciiType =1;
             message = "200 - Setting TYPE to ASCII\n";
-            write(sock, message, strlen(message));
+            write(mainSocket, message, strlen(message));
 
           }else{
             message = "200 -Type is already ASCII\n";
-            write(sock, message, strlen(message));
+            write(mainSocket, message, strlen(message));
 
           }
         }else if(strcasecmp(parameter,"I")){
-
+          // file type set to Image
           if (asciiType == 1){
             asciiType = 0;
             message = "200 - Setting TYPE to Image\n";
-            write(sock, message, strlen(message));
+            write(mainSocket, message, strlen(message));
 
           }else{
             message = "200 -Type is already Image\n";
-            write(sock, message, strlen(message));
+            write(mainSocket, message, strlen(message));
 
           }
 
         }else{
-          message = "504 -This server onlys support Type A and Type I. \n";
-          write(sock, message, strlen(message));
+          message = "504 - This server only allows Type Image and ASCII. \n";
+          write(mainSocket, message, strlen(message));
 
         }
 
       }else{
-        message = "530 -Must login first. \n";
-        write(sock, message, strlen(message));
+        message = "530 - Not logged in. \n";
+        write(mainSocket, message, strlen(message));
       }
 
 
@@ -278,21 +289,21 @@ void *connectionHandler( void * serverSock){
 
           if (streamMode == 0) {
             streamMode = 1;
-            message = "200 - Entering Stream mode. \n";
-            write(sock, message, strlen(message));
+            message = "200 - Switching to Stream mode. \n";
+            write(mainSocket, message, strlen(message));
 
           } else {
             message = "200 - Already in Stream mode. \n";
-            write(sock, message, strlen(message));
+            write(mainSocket, message, strlen(message));
           }
 
         } else {
-          message = "504 - This server only supports MODE S. \n";
-          write(sock, message, strlen(message));
+          message = "504 - This server only supports Stream mode. \n";
+          write(mainSocket, message, strlen(message));
         }
       } else{
-        message = "530 -Must login first. \n";
-        write(sock, message, strlen(message));
+        message = "530 - Not logged in. \n";
+        write(mainSocket, message, strlen(message));
 
       }
 
@@ -306,56 +317,56 @@ void *connectionHandler( void * serverSock){
 
           if (fsType == 0) {
             fsType = 1;
-            message = "200 - Data Structure set to File Structure. \n";
-            write(sock, message, strlen(message));
+            message = "200 - Structure set to File Structure. \n";
+            write(mainSocket, message, strlen(message));
 
           } else {
-            message = "200 - Data Structure is alreadyset to  File structure. \n";
-            write(sock, message, strlen(message));
+            message = "200 - Structure already set to File structure. \n";
+            write(mainSocket, message, strlen(message));
           }
 
         } else {
-          message = "504 - This server only supports STRU F. \n";
-          write(sock, message, strlen(message));
+          message = "504 - This server only allows File Structure. \n";
+          write(mainSocket, message, strlen(message));
         }
 
 
       }else{
-        message = "530 -Must login first. \n";
-        write(sock, message, strlen(message));
+        message = "530 - Not logged in. \n";
+        write(mainSocket, message, strlen(message));
 
       }
 
 
     }else if (strcasecmp(command,"PASV")==0){
-
+      // Passive mode
 
       if(passiveMode ==0){
 
-        // Loop until a passive socket is succesfully created
+        // Loop until a passive mainSocket is created (should try tries all available ports)
 
         do{
           //create a random port
-          pasvPort = (rand()% 64512 +1024);
+          pasvPort = (rand()% 64512 +1024); //find difference between limit
 
-          //Create a new socket
-          pasvSock = socket(AF_INET, SOCK_STREAM, 0);
+          //Create a new mainSocket
+          pasvSocket = socket(AF_INET, SOCK_STREAM, 0);
           pasvServer.sin_family = AF_INET;
           pasvServer.sin_addr.s_addr = INADDR_ANY;
-          pasvServer.sin_port = htons(pasvPort);
+          pasvServer.sin_port = htons(pasvPort); //translate int to port, making sure bytes stored correctly
 
-        }while( bind(pasvSock, (struct sockaddr *) &pasvServer, sizeof(pasvServer))<0);
+        }while( bind(pasvSocket, (struct sockaddr *) &pasvServer, sizeof(pasvServer))<0); //should be able to bind correctly
 
 
         if(pasvPort<0){
 
-          message = "500 - Error: entering Passive Mode. \n";
-          write(sock, message, strlen(message));
+          message = "550 - Error: cannot enter Passive Mode. \n";
+          write(mainSocket, message, strlen(message));
 
 
         }else{
 
-          listen(pasvSock,1);
+          listen(pasvSocket,1);
           passiveMode =1;
 
           uint32_t t = serverAddr.sin_addr.s_addr;
@@ -367,10 +378,13 @@ void *connectionHandler( void * serverSock){
           int e =  pasvPort >>8;
           int f = pasvPort&0xff;
           char buf [256];
-          // snprintf(buf, sizeof buf,"%s%d%s%d%s%d%s%d%s%d%s%d%s", "227 Entering passive mode(", a,",",b, ",",c,",",d,",",e,",",f,")\n" );
-          snprintf(buf, sizeof buf,"%d%s%d%s%d%s%d%s%d%s%d%s%d%s",pasvPort, " 227 Entering passive mode(", a,",",b, ",",c,",",d,",",e,",",f,")\n" );
 
-          write(sock, buf,strlen(buf)+1);
+
+
+          snprintf(buf, sizeof buf,"%s%d%s%d%s%d%s%d%s%d%s%d%s","227 Entering passive mode(", a,",",b, ",",c,",",d,",",e,",",f,")\n" );
+
+          write(mainSocket, buf,strlen(buf)+1); //size issue
+          //outputs the required passive port info
 
         }
 
@@ -379,12 +393,12 @@ void *connectionHandler( void * serverSock){
 
         char buf [256];
         snprintf(buf, sizeof buf,"%s%d\n", "227 Already in passive mode. Port number: ",pasvPort);
-        write(sock, buf,strlen(buf));
+        write(mainSocket, buf,strlen(buf));
       }
 
 
     }//else if (strcasecmp(command, "PORT") == 0){
-
+          //Not handling this yet
       //}
     else if (strcasecmp(command,"NLST")==0){
 
@@ -392,33 +406,33 @@ void *connectionHandler( void * serverSock){
 
 
         if(passiveMode ==1){
-
-          if(pasvPort > 1024 && pasvPort <= 65535 && pasvSock>= 0){
+          // check correct passive connection port
+          if(pasvPort > 1024 && pasvPort <= 65535 && pasvSocket>= 0){
             asciiType = 1;
-            message = "150 - here comes the directionry listing. \n";
-            write(sock, message, strlen(message));
+            message = "150 - Outputs Directory listing. \n";
+            write(mainSocket, message, strlen(message));
 
 
-            listen(pasvSock,BACKLOG);
-            dataClient = accept(pasvSock, (struct sockaddr *)&dataClientAdrr, &dataClientLen);
+            listen(pasvSocket,BACKLOG);
+            dataClient = accept(pasvSocket, (struct sockaddr *)&dataClientAdrr, &dataClientLength);
 
-            getcwd(cwd, sizeof(cwd));
-            listFiles(dataClient, cwd);
+            getcwd(cwdDir, sizeof(cwdDir)); //gets current directory
+            listFiles(dataClient, cwdDir);
 
             message = "260 - Transfer complete. \n";
-            write(sock, message, strlen(message));
+            write(mainSocket, message, strlen(message));
 
 
             close(dataClient);
             dataClient = -1;
 
-            close(pasvSock);
+            close(pasvSocket);
             passiveMode = 0;
 
 
           }else{
-            message = "No passive server created. \n";
-            write(sock, message, strlen(message));
+            message = "550 - No passive server created. \n";
+            write(mainSocket, message, strlen(message));
 
 
           }
@@ -426,8 +440,8 @@ void *connectionHandler( void * serverSock){
 
 
         }else{
-          message = " Use PASV first. \n";
-          write(sock, message, strlen(message));
+          message = "503 - Use PASV first. \n";
+          write(mainSocket, message, strlen(message));
 
         }
 
@@ -435,8 +449,8 @@ void *connectionHandler( void * serverSock){
 
 
       }else{
-        message = "Must login first. \n";
-        write(sock, message, strlen(message));
+        message = "530 - Not logged in. \n";
+        write(mainSocket, message, strlen(message));
 
       }
 
@@ -450,40 +464,40 @@ void *connectionHandler( void * serverSock){
 
         if(passiveMode ==1){
 
-          if(pasvPort > 1024 && pasvPort <= 65535 && pasvSock>= 0){
+          if(pasvPort > 1024 && pasvPort <= 65535 && pasvSocket>= 0){
             asciiType = 0;
-            message = " Opening binary mode data connection. \n";
-            write(sock, message, strlen(message));
+            message = " Enabling binary mode transfer. \n";
+            write(mainSocket, message, strlen(message));
 
 
-            listen(pasvSock,BACKLOG);
-            dataClient = accept(pasvSock, (struct sockaddr *)&dataClientAdrr, &dataClientLen);
+            listen(pasvSocket,BACKLOG);
+            dataClient = accept(pasvSocket, (struct sockaddr *)&dataClientAdrr, &dataClientLength);
 
 
             sscanf(clientMessage,"%s%s", parameter, parameter);
 
-
+            // begin trying to read the file and send it over to client
             int st = sendingPath(dataClient, parameter, 0);
 
             if (st>= 0){
               message = "200 - Transfer complete. \n";
-              write(sock, message, strlen(message));
+              write(mainSocket, message, strlen(message));
             }else {
-              message = " File not found. \n";
-              write(sock, message, strlen(message));
+              message = "550 - File not found. \n";
+              write(mainSocket, message, strlen(message));
             }
 
 
             close(dataClient);
             dataClient = -1;
 
-            close(pasvSock);
+            close(pasvSocket);
             passiveMode = 0;
 
 
           }else{
-            message = " No passive server created. \n";
-            write(sock, message, strlen(message));
+            message = "550 - No passive server created. \n";
+            write(mainSocket, message, strlen(message));
 
 
           }
@@ -491,8 +505,8 @@ void *connectionHandler( void * serverSock){
 
 
         }else{
-          message = " Use PASV first. \n";
-          write(sock, message, strlen(message));
+          message = "503 - Use PASV first. \n";
+          write(mainSocket, message, strlen(message));
 
         }
 
@@ -500,8 +514,8 @@ void *connectionHandler( void * serverSock){
 
 
       }else{
-        message = "Must login first. \n";
-        write(sock, message, strlen(message));
+        message = "530 - Not logged in. \n";
+        write(mainSocket, message, strlen(message));
 
       }
 
@@ -513,35 +527,35 @@ void *connectionHandler( void * serverSock){
 
 
       if(strstr(parameter,"../")!= NULL){
-        message = "  Failed to change path \n";
-        write(sock, message, strlen(message));
+        message = "550 - Illegal path ../ \n";
+        write(mainSocket, message, strlen(message));
       }else if( strncmp(parameter,"./",2)==0){
-        message = "  Failed to change path \n";
-        write(sock, message, strlen(message));
+        message = "550 - Illegal path \n";
+        write(mainSocket, message, strlen(message));
       }else if (chdir((char *) parameter) == 0) {
-        message = " Changed path \n";
-        write(sock, message, strlen(message));
+        message = "250 - Changed path \n";
+        write(mainSocket, message, strlen(message));
       } else {
-        message = "  Failed to change path \n";
-        write(sock, message, strlen(message));
+        message = "550 - Failed to change path, recheck input \n";
+        write(mainSocket, message, strlen(message));
       }
 
     } else if (strcasecmp(command, "CDUP") ==0){
 
-
-      chdir((char*)parent);
+      // return to previously stored parent directory
+      chdir((char*)parentDir);
 
     } else if ( strcasecmp(command, "QUIT") ==0){
-      message = " User has  quit Terminating connection. \n";
-      write(sock, message, strlen(message));
+      message = "221 - User has  quit Terminating connection. \n";
+      write(mainSocket, message, strlen(message));
       fflush(stdout);
-      close(sock);
-      close(pasvSock);
+      close(mainSocket);
+      close(pasvSocket);
       break;
 
     }else{
-      message = "500 - no this command\n";
-      write(sock, message, strlen(message));
+      message = "500 - Unrecognized command, if PORT, EPSV, not implemented.\n";
+      write(mainSocket, message, strlen(message));
     }
 
     if(readSize == -1){
