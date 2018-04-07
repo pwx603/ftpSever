@@ -9,18 +9,9 @@
 #include "usage.h"
 #include<stdarg.h>
 
-// Here is an example of how to use the above function. It also shows
-// one how to get the arguments passed on the command line.
-
 #define BACKLOG 1
 void *connectionHandler(void*);
-
-
-
-
 int portNumber;
-
-
 int sendingPath( int  descriptor, char * file , uint32_t offset);
 int sendingFiles(int descriptor, FILE *f);
 
