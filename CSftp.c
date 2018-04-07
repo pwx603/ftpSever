@@ -1,579 +1,559 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <stdio.h>
-#include <string.h>
-#include <strings.h>
 #include <stdlib.h>
-#include <netdb.h>
+#include <netinet/in.h>
 #include <unistd.h>
-#include <arpa/inet.h>
+#include <memory.h>
 #include "dir.h"
 #include "usage.h"
-#include "ConnectionManager.h"
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <errno.h>
-#include <string.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netdb.h>
-#include <arpa/inet.h>
-#include <sys/wait.h>
-#include <signal.h>
-
-#define BACKLOG 10	 // how many pending connections queue will hold
-#define PORT "1200"
-
-
-#ifndef MAXHOSTNAMELEN
-#define MAXHOSTNAMELEN 256
-#endif
-
-#define BACKLOG 10
-#define BUFFSIZE 1000
-#define sendMsg(socket, msg) send(socket, msg, strlen(msg), 0)
-#define recvMsg(socket, msg) recv(socket, msg, BUFFSIZE, 0)
-
-char *portNumber;
-typedef enum command { INVALID = -1,
-                       USER,
-                       TYPE,
-                       MODE,
-                       STRU,
-                       PASV,
-                       NLST,
-                       RETR,
-                       CWD,
-                       CDUP,
-                       QUIT } command_t;
-struct
-{
-  unsigned int is_logged_in : 1;
-  unsigned int is_ascii : 1;
-  unsigned int is_fs : 1;
-  unsigned int is_passive : 1;
-  unsigned int is_stream : 1;
-} flags;
-struct addrinfo *p;
-
-void *get_in_addr(struct sockaddr *);
-void handleConnection(int *sock);
-command_t handeleCommand(char *);
-void splitStr(char *, char, char *[]);
+#include<stdarg.h>
 
 // Here is an example of how to use the above function. It also shows
 // one how to get the arguments passed on the command line.
 
-void debug(void)
-{
-  printf("ai_family %d\n", p->ai_family);
-  printf("ai_socktype %d\n", p->ai_socktype);
-  printf("ai_protocol %d\n", p->ai_protocol);
-  char ipstring[INET6_ADDRSTRLEN];
-  if (p->ai_family == AF_INET)
-  {
+#define BACKLOG 1
+void *connectionHandler(void*);
 
-    struct sockaddr_in *ipv4 = (struct sockaddr_in *)p->ai_addr;
-    void *addr = &(ipv4->sin_addr);
-    int port = htons(ipv4->sin_port);
-    printf("port is: %d\n", port);
-    inet_ntop(p->ai_family, addr, ipstring, sizeof ipstring);
-    printf(" addr: %s\n", ipstring);
+
+
+
+int portNumber;
+
+
+int sendingPath( int  descriptor, char * file , uint32_t offset);
+int sendingFiles(int descriptor, FILE *f);
+
+/**
+ * sendingPath: handles file transfer, using fopen to read the file (non-text files)
+ *  calls sendingFiles to actually pass the file bit by bit
+ * @param descriptor
+ * @param file
+ * @param offset
+ * @return integer, if 0 meaning successfully read file, -1 if stream not closed or file not read properly
+ */
+int sendingPath( int  descriptor, char * file , uint32_t offset){
+  FILE * f = fopen (file, "rb");
+  if(f){
+    fseek(f, offset, SEEK_SET);
+    int st = sendingFiles(descriptor, f);
+    if(st< 0 ){
+      return -1;
+    }
+
+
+    int ret = fclose(f);
+    return ret == 0 ? 0: -1;        //returns -1 if not 0, meaning stream has not been successfully closed
+
   }
+
 }
 
-int main(int argc, char **argv)
-{
+/**
+ *
+ * @param descriptor
+ * @param f
+ * @return
+ */
+int sendingFiles(int descriptor, FILE *f){
+  char filebuf[1025];
+  int n, ret = 0;
+
+  while((n = fread(filebuf, 1, 1024, f))>0){
+    int st = send (descriptor, filebuf, n , 0);
+
+    if(st<0){
+      ret = -1;
+      break;
+    }else{
+      filebuf[n] = 0;
+    }
+
+  }
+
+  return ret;
+
+}
+
+int main(int argc, char **argv) {
 
   // This is some sample code feel free to delete it
   // This is the main program for the thread version of nc
 
+  int i;
+
+  //added
+  int serverSock, clientStock, c, *newSock;
+  struct sockaddr_in server,client;
+
   // Check the command line arguments
-  if (argc != 2)
-  {
+  if (argc != 2) {
     usage(argv[0]);
     return -1;
   }
 
-  portNumber = argv[1];
+  portNumber = atoi(argv[1]);
 
-  int sockfd, new_fd;
-  socklen_t sin_size;
 
-  struct addrinfo hints, *servinfo;
-  struct sockaddr_storage their_addr;
+  // start create sock
 
-  int yes = 1;
-  int status;
-  char s[INET6_ADDRSTRLEN];
+  serverSock = socket(AF_INET,SOCK_STREAM,0);
 
-  // Setting addrinfo hints to 0
-
-  memset(&hints, 0, sizeof hints);
-  hints.ai_family = AF_UNSPEC;
-  hints.ai_socktype = SOCK_STREAM;
-  hints.ai_flags = AI_PASSIVE;
-
-  if ((status = getaddrinfo(NULL, portNumber, &hints, &servinfo)) != 0)
-  {
-    fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(status));
-    exit(1);
+  if(serverSock ==-1){
+    perror(" Error: Failed to create socket. \n ");
+    return -1;
   }
 
-  for (p = servinfo; p != NULL; p = p->ai_next)
-  {
-    debug();
+  puts("Socket is created");
 
-    if ((sockfd = socket(p->ai_family, p->ai_socktype,
-                         p->ai_protocol)) == -1)
-    {
-      perror("server: socket");
-      continue;
-
-    }
-    //printf("%s", port);
-
-    int sockfd, new_fd;  // listen on sock_fd, new connection on new_fd
-    struct addrinfo hints, *servinfo, *p;
-    struct sockaddr_storage their_addr; // connector's address information
-    socklen_t sin_size;
-    struct sigaction sa;
-    int yes=1;
-    char s[INET6_ADDRSTRLEN];
-    int rv;
-
-    memset(&hints, 0, sizeof hints);
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_PASSIVE; // use my IP
-    //printf("%s", port);
-    if ((rv = getaddrinfo(NULL, portNumber, &hints, &servinfo)) != 0) {
-        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
-        return 1;
-    }
+  // prepare the sockaddr_in structure
+  server.sin_family = AF_INET;
+  server.sin_addr.s_addr = INADDR_ANY;
+  server.sin_port = htons(portNumber);
 
 
-    // loop through all the results and bind to the first we can
-    for(p = servinfo; p != NULL; p = p->ai_next) {
-        if ((sockfd = socket(p->ai_family, p->ai_socktype,
-                             p->ai_protocol)) == -1) {
-            perror("server: socket");
-            continue;
-        }
-
-        if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes,
-                       sizeof(int)) == -1) {
-            perror("setsockopt");
-            exit(1);
-        }
-
-        if (bind(sockfd, p->ai_addr, p->ai_addrlen) == -1) {
-            close(sockfd);
-            perror("server: bind");
-            continue;
-        }
-
-        break;
-    }
-
-    freeaddrinfo(servinfo); // all done with this structure
-
-    if (p == NULL)  {
-        fprintf(stderr, "server: failed to bind\n");
-        exit(1);
-    }
-
-    if (listen(sockfd, BACKLOG) == -1) {
-        perror("listen");
-        exit(1);
-    }
-
-    sa.sa_handler = sigchld_handler; // reap all dead processes
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_RESTART;
-    if (sigaction(SIGCHLD, &sa, NULL) == -1) {
-        perror("sigaction");
-        exit(1);
-    }
-
-    printf("server: waiting for connections...\n");
-
-    while(1) {  // main accept() loop
-        sin_size = sizeof their_addr;
-        new_fd = accept(sockfd, (struct sockaddr *)&their_addr, &sin_size);
-        if (new_fd == -1) {
-            perror("accept");
-            continue;
-        }
-
-        inet_ntop(their_addr.ss_family,
-                  get_in_addr((struct sockaddr *)&their_addr),
-                  s, sizeof s);
-        printf("server: got connection from %s\n", s);
-
-        if (!fork()) { // this is the child process
-            close(sockfd); // child doesn't need the listener
-            if (send(new_fd, "Hello, world!", 13, 0) == -1)
-                perror("send");
-            close(new_fd);
-            exit(0);
-        }
-        close(new_fd);  // parent doesn't need this
-    }
-
-
-
-    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes,
-                   sizeof(int)) == -1)
-    {
-      perror("setsockopt");
-      exit(1);
-    }
-
-    if (bind(sockfd, p->ai_addr, p->ai_addrlen) == -1)
-    {
-      close(sockfd);
-      perror("server: bind");
-      continue;
-    }
-
-    break;
+  //bind
+  if(bind(serverSock,(struct sockaddr *)&server, sizeof(server) )){
+    perror("Error: Bind failed");
+    return -1;
   }
 
-  //freeaddrinfo(servinfo); // all done with this structure
+  puts("Bind done.");
 
-  if (p == NULL)
-  {
-    fprintf(stderr, "server: failed to bind\n");
-    exit(1);
+
+  //Listen
+  listen(serverSock, BACKLOG);
+
+  puts("Waiting for incoming connections...");
+
+  c = sizeof(struct sockaddr_in);
+
+
+  while ((clientStock = accept(serverSock, (struct sockaddr *) &client, (socklen_t *) &c))>=0) {
+
+    puts("Connection accepted");
+
+
+    // handle connection
+    newSock = malloc(1);
+    *newSock = clientStock;
+
+    void (*connectionHandler_ptr)(int) = &connectionHandler;
+
+    (*connectionHandler_ptr)((void *) newSock);
+
+    puts("Closing connection.");
+
+
+    puts("Waiting for incoming connections...");
+
   }
 
-  if (listen(sockfd, BACKLOG) == -1)
-  {
-    perror("listen");
-    exit(1);
-  }
 
-  printf("server: waiting for connections...\n");
-
-  for (;;)
-  {
-    sin_size = sizeof their_addr;
-    new_fd = accept(sockfd, (struct sockaddr *)&their_addr, &sin_size);
-    if (new_fd == -1)
-    {
-      perror("accept");
-      continue;
-    }
-
-    inet_ntop(their_addr.ss_family,
-              get_in_addr((struct sockaddr *)&their_addr),
-              s, sizeof s);
-    printf("server: got connection from %s\n", s);
-
-    if (sendMsg(new_fd, "Hello, world!\n") == -1)
-      perror("send");
-
-    handleConnection(new_fd);
-    close(new_fd);
-    exit(0);
-  }
 
   // This is how to call the function in dir.c to get a listing of a directory.
   // It requires a file descriptor, so in your code you would pass in the file descriptor
   // returned for the ftp server's data connection
+/*
+    printf("Printed %d directory entries\n", listFiles(1, "."));
+*/
 
-  printf("Printed %d directory entries\n", listFiles(1, "."));
   return 0;
+
 }
 
-// get IPv4 or IPv6
-void *get_in_addr(struct sockaddr *sa)
-{
-  if (sa->sa_family == AF_INET)
-  {
-    return &(((struct sockaddr_in *)sa)->sin_addr);
-  }
+void *connectionHandler( void * serverSock){
 
-  return &(((struct sockaddr_in6 *)sa)->sin6_addr);
-}
+  int sock = *(int*)serverSock;
+  int readSize;
 
-void handleConnection(int *sock)
-{
-  char *msg, clientMsg[BUFFSIZE], arg[BUFFSIZE], hostName[MAXHOSTNAMELEN];
-  int recvStatus, sendStatus;
+  struct sockaddr_in serverAddr;
+  int serverAddrLen = sizeof(serverAddr);
+
+  /*
+   *  getsockname () return the current address to which the sock is bound
+   */
+  getsockname(sock, (struct sockaddr*)&serverAddr,&serverAddrLen );
+
+
+  int dataClient = -1;
+  struct sockaddr_in dataClientAdrr;
+  int dataClientLen = sizeof(dataClientAdrr);
+
+  char cwd[1024], parent[1024];
+
+  char* message, clientMessage[2000],command[4], parameter[1000];
+
+  int loggedIn = 0, asciiType = 0, streamMode = 0, fsType = 0, passiveMode = 0;
+
   int pasvPort, pasvSock;
-  struct sockaddr_in pasvServer, controlServer;
-  socklen_t sin_size;
-  char ipstr[INET6_ADDRSTRLEN];
+  struct sockaddr_in pasvServer;
 
-  msg = "220 - Welcome to FTP server. This server only supports the username: cs317\n";
+  getcwd(parent,sizeof(parent));
 
-  // Initialize flags
-  flags.is_logged_in = flags.is_ascii = flags.is_stream = flags.is_fs = flags.is_passive = 0;
 
-  if (sendMsg(sock, msg) == -1)
-  {
-    perror("send");
-    return;
-  }
+  // send the first message
+  message = "220 - Welcome to FTP server. This server only supports the username: cs317\n";
+  write(sock, message, strlen(message));
 
-  while ((recvStatus = recvMsg(sock, clientMsg)) > 0)
-  {
-    sscanf(clientMsg, "%s", arg);
+  while((readSize = recv(sock, clientMessage, 2000, 0))>0){
 
-    switch (handeleCommand(arg))
-    {
-    case USER:
-      if (flags.is_logged_in == 0)
-      {
-        sscanf(clientMsg, "%s %s", arg, arg);
+    sscanf(clientMessage,"%s",command );
 
-        if (!strcasecmp(arg, "cs317"))
-        {
-          flags.is_logged_in = 1;
+    //message = strcat(command, "\n");
 
-          msg = "230 - Login successful\n";
-          sendMsg(sock, msg);
+    puts(command);
+    puts("\n");
+
+    if(strcasecmp(command,"USER")==0){
+      // If not logged in
+      if(loggedIn ==0){
+        sscanf(clientMessage, "%s%s", parameter,parameter);
+
+        if(!strcasecmp(parameter,"cs317")){
+          loggedIn = 1;
+
+          message = "230 - Login successful\n";
+          write(sock, message, strlen(message));
+          //    sendStr(sock,"230 - Login successful\n" );
+
+        }else{
+          message = "530 - This server only supports the username: cs317\n";
+          write(sock, message, strlen(message));
         }
-        else
-        {
-          msg = "430 - This server only supports the username: cs317\n";
-          sendMsg(sock, msg);
-        }
+      }else{
+        message = "530 - Can't change from cs317\n";
+        write(sock, message, strlen(message));
       }
-      else
-      {
-        msg = "430 - Can't change from cs317\n";
-        sendMsg(sock, msg);
-      }
+    }else if(strcasecmp(command,"TYPE")== 0){
 
-      printf("%d\n", USER);
-      break;
-    case TYPE:
-      if (flags.is_logged_in == 1)
-      {
-        sscanf(clientMsg, "%s %s", arg, arg);
-        if (strcasecmp(arg, "A") == 0)
-        {
-          flags.is_ascii = 1;
-          msg = "200 - Switching to ASCII mode\n";
-        }
-        else if (strcasecmp(arg, "I") == 0)
-        {
-          flags.is_ascii = 0;
-          msg = "200 - Switching to Image mode\n";
-        }
-        else
-        {
-          msg = "504 - This server onlys support Type A and Type I. \n";
-        }
-      }
-      else
-      {
-        msg = "504 - Login first\n";
-      }
-      sendMsg(sock, msg);
-      printf("%d\n", TYPE);
-      break;
-    case MODE:
-      if (flags.is_logged_in == 1)
-      {
-        sscanf(clientMsg, "%s %s", arg, arg);
+      if(loggedIn ==1){
 
-        if (strcasecmp(arg, "S"))
-        {
-          flags.is_stream = 1;
-          msg = "200 Mode set to S.\n";
-        }
-        else
-        {
-          msg = "504 Bad MODE command.\n";
-        }
-      }
-      else
-      {
-        msg = "530 Login first.\n";
-      }
-      sendMsg(sock, msg);
-      printf("%d\n", MODE);
-      break;
-    case STRU:
-      if (flags.is_logged_in == 1)
-      {
-        sscanf(clientMsg, "%s %s", arg, arg);
+        sscanf(clientMessage,"%s",parameter);
 
-        if (strcasecmp(arg, "F"))
-        {
-          flags.is_fs = 1;
-          msg = "200 Data Structure set to File Structure.\n";
-        }
-        else
-        {
-          msg = "504 Bad STRU command.\n";
-        }
-      }
-      else
-      {
-        msg = "530 Login first.\n";
-      }
-      sendMsg(sock, msg);
+        if(strcasecmp(parameter,"A")==0){
 
-      printf("%d\n", STRU);
-      break;
-    case PASV:
-      if (flags.is_logged_in == 1)
-      {
-        // Random Port
-        do
-        {
-          pasvPort = (rand() % 64512 + 1024);
-          // New Socket
-          if ((pasvSock = socket(p->ai_family, p->ai_socktype,
-                                 p->ai_protocol)) == -1)
-          {
-            perror("server: socket");
-            continue;
+          if (asciiType == 0){
+            asciiType =1;
+            message = "200 - Setting TYPE to ASCII\n";
+            write(sock, message, strlen(message));
+
+          }else{
+            message = "200 -Type is already ASCII\n";
+            write(sock, message, strlen(message));
+
+          }
+        }else if(strcasecmp(parameter,"I")){
+
+          if (asciiType == 1){
+            asciiType = 0;
+            message = "200 - Setting TYPE to Image\n";
+            write(sock, message, strlen(message));
+
+          }else{
+            message = "200 -Type is already Image\n";
+            write(sock, message, strlen(message));
+
           }
 
-          pasvServer.sin_family = p->ai_family;
+        }else{
+          message = "504 -This server onlys support Type A and Type I. \n";
+          write(sock, message, strlen(message));
+
+        }
+
+      }else{
+        message = "530 -Must login first. \n";
+        write(sock, message, strlen(message));
+      }
+
+
+    }else if (strcasecmp(command, "MODE")==0){
+
+
+      if( loggedIn ==1) {
+        sscanf(clientMessage, "%s", parameter);
+
+        if (strcasecmp(parameter, "S")) {
+
+          if (streamMode == 0) {
+            streamMode = 1;
+            message = "200 - Entering Stream mode. \n";
+            write(sock, message, strlen(message));
+
+          } else {
+            message = "200 - Already in Stream mode. \n";
+            write(sock, message, strlen(message));
+          }
+
+        } else {
+          message = "504 - This server only supports MODE S. \n";
+          write(sock, message, strlen(message));
+        }
+      } else{
+        message = "530 -Must login first. \n";
+        write(sock, message, strlen(message));
+
+      }
+
+    }else if(strcasecmp(command, "STRU")==0){
+
+      if(loggedIn==1){
+
+        sscanf(clientMessage, "%s", parameter);
+
+        if (strcasecmp(parameter, "F")) {
+
+          if (fsType == 0) {
+            fsType = 1;
+            message = "200 - Data Structure set to File Structure. \n";
+            write(sock, message, strlen(message));
+
+          } else {
+            message = "200 - Data Structure is alreadyset to  File structure. \n";
+            write(sock, message, strlen(message));
+          }
+
+        } else {
+          message = "504 - This server only supports STRU F. \n";
+          write(sock, message, strlen(message));
+        }
+
+
+      }else{
+        message = "530 -Must login first. \n";
+        write(sock, message, strlen(message));
+
+      }
+
+
+    }else if (strcasecmp(command,"PASV")==0){
+
+
+      if(passiveMode ==0){
+
+        // Loop until a passive socket is succesfully created
+
+        do{
+          //create a random port
+          pasvPort = (rand()% 64512 +1024);
+
+          //Create a new socket
+          pasvSock = socket(AF_INET, SOCK_STREAM, 0);
+          pasvServer.sin_family = AF_INET;
           pasvServer.sin_addr.s_addr = INADDR_ANY;
           pasvServer.sin_port = htons(pasvPort);
 
-        } while (bind(pasvSock, (struct sockaddr *)&pasvServer, sizeof(pasvServer)) < 0);
+        }while( bind(pasvSock, (struct sockaddr *) &pasvServer, sizeof(pasvServer))<0);
 
-        if(!(pasvPort > 1024 && pasvPort <= 65535)){
-          perror("server: pasvPort error");
-          continue;
-        }
 
-        listen(pasvSock, 1);
-        flags.is_passive = 1;
+        if(pasvPort<0){
 
-        sin_size = sizeof controlServer;
-        getsockname(sock, (struct sockaddr *)&controlServer, &sin_size);
+          message = "500 - Error: entering Passive Mode. \n";
+          write(sock, message, strlen(message));
 
-        inet_ntop(p->ai_family, &controlServer.sin_addr, ipstr, sizeof ipstr);
-        printf(" addr: %s\n", ipstr);
-        char *splitIp[4];
-        splitStr(ipstr, '.', splitIp);
 
-        char temp[BUFFSIZE];
-        sprintf(temp, "227 Entering Passive Mode (%s,%s,%s,%s,%d,%d).", splitIp[0], splitIp[1], splitIp[2], splitIp[3], pasvPort >> 8, pasvPort & 0xff);
-        msg = temp;
-      }else{
-        msg = "530 Please login with USER.";
-      }
-      sendMsg(sock, msg);
-      printf("%d\n", PASV);
-      break;
-    case NLST:
-      if(flags.is_logged_in == 1){
-        if(flags.is_passive == 1){
-
-          
         }else{
-          msg = "425 Use PASV first.";
+
+          listen(pasvSock,1);
+          passiveMode =1;
+
+          uint32_t t = serverAddr.sin_addr.s_addr;
+
+          int a = t&0xff;
+          int b = (t>>8 )&0xff;
+          int c = (t>>16 )& 0xff;
+          int d = (t>> 24)&0xff;
+          int e =  pasvPort >>8;
+          int f = pasvPort&0xff;
+          char buf [256];
+          // snprintf(buf, sizeof buf,"%s%d%s%d%s%d%s%d%s%d%s%d%s", "227 Entering passive mode(", a,",",b, ",",c,",",d,",",e,",",f,")\n" );
+          snprintf(buf, sizeof buf,"%d%s%d%s%d%s%d%s%d%s%d%s%d%s",pasvPort, " 227 Entering passive mode(", a,",",b, ",",c,",",d,",",e,",",f,")\n" );
+
+          write(sock, buf,strlen(buf)+1);
+
         }
+
+
       }else{
-        msg = "530 Please login with USER.";
+
+        char buf [256];
+        snprintf(buf, sizeof buf,"%s%d\n", "227 Already in passive mode. Port number: ",pasvPort);
+        write(sock, buf,strlen(buf));
       }
-      sendMsg(sock, msg);
-      printf("%d\n", NLST);
+
+
+    }//else if (strcasecmp(command, "PORT") == 0){
+
+      //}
+    else if (strcasecmp(command,"NLST")==0){
+
+      if(loggedIn ==1 ){
+
+
+        if(passiveMode ==1){
+
+          if(pasvPort > 1024 && pasvPort <= 65535 && pasvSock>= 0){
+            asciiType = 1;
+            message = "150 - here comes the directionry listing. \n";
+            write(sock, message, strlen(message));
+
+
+            listen(pasvSock,BACKLOG);
+            dataClient = accept(pasvSock, (struct sockaddr *)&dataClientAdrr, &dataClientLen);
+
+            getcwd(cwd, sizeof(cwd));
+            listFiles(dataClient, cwd);
+
+            message = "260 - Transfer complete. \n";
+            write(sock, message, strlen(message));
+
+
+            close(dataClient);
+            dataClient = -1;
+
+            close(pasvSock);
+            passiveMode = 0;
+
+
+          }else{
+            message = "No passive server created. \n";
+            write(sock, message, strlen(message));
+
+
+          }
+
+
+
+        }else{
+          message = " Use PASV first. \n";
+          write(sock, message, strlen(message));
+
+        }
+
+
+
+
+      }else{
+        message = "Must login first. \n";
+        write(sock, message, strlen(message));
+
+      }
+
+
+
+    }else if (strcasecmp(command,"RETR")==0){
+
+
+      if(loggedIn ==1 ){
+
+
+        if(passiveMode ==1){
+
+          if(pasvPort > 1024 && pasvPort <= 65535 && pasvSock>= 0){
+            asciiType = 0;
+            message = " Opening binary mode data connection. \n";
+            write(sock, message, strlen(message));
+
+
+            listen(pasvSock,BACKLOG);
+            dataClient = accept(pasvSock, (struct sockaddr *)&dataClientAdrr, &dataClientLen);
+
+
+            sscanf(clientMessage,"%s%s", parameter, parameter);
+
+
+            int st = sendingPath(dataClient, parameter, 0);
+
+            if (st>= 0){
+              message = "200 - Transfer complete. \n";
+              write(sock, message, strlen(message));
+            }else {
+              message = " File not found. \n";
+              write(sock, message, strlen(message));
+            }
+
+
+            close(dataClient);
+            dataClient = -1;
+
+            close(pasvSock);
+            passiveMode = 0;
+
+
+          }else{
+            message = " No passive server created. \n";
+            write(sock, message, strlen(message));
+
+
+          }
+
+
+
+        }else{
+          message = " Use PASV first. \n";
+          write(sock, message, strlen(message));
+
+        }
+
+
+
+
+      }else{
+        message = "Must login first. \n";
+        write(sock, message, strlen(message));
+
+      }
+
+
+
+    }else if( strcasecmp(command, "CWD") ==0 ){
+
+      sscanf(clientMessage, "%s%s", parameter,parameter);
+
+
+      if(strstr(parameter,"../")!= NULL){
+        message = "  Failed to change path \n";
+        write(sock, message, strlen(message));
+      }else if( strncmp(parameter,"./",2)==0){
+        message = "  Failed to change path \n";
+        write(sock, message, strlen(message));
+      }else if (chdir((char *) parameter) == 0) {
+        message = " Changed path \n";
+        write(sock, message, strlen(message));
+      } else {
+        message = "  Failed to change path \n";
+        write(sock, message, strlen(message));
+      }
+
+    } else if (strcasecmp(command, "CDUP") ==0){
+
+
+      chdir((char*)parent);
+
+    } else if ( strcasecmp(command, "QUIT") ==0){
+      message = " User has  quit Terminating connection. \n";
+      write(sock, message, strlen(message));
+      fflush(stdout);
+      close(sock);
+      close(pasvSock);
       break;
-    case RETR:
-      printf("%d\n", RETR);
-      break;
-    case CWD:
-      printf("%d\n", CWD);
-      break;
-    case CDUP:
-      printf("%d\n", CDUP);
-      break;
-    case QUIT:
-      exit(0);
-    case INVALID:
-      msg = "500 - no this command\n";
-      sendMsg(sock, msg);
+
+    }else{
+      message = "500 - no this command\n";
+      write(sock, message, strlen(message));
     }
 
-    // if(strcasecmp(command,"EXIT")==0){
-    //   exit(0);
-    // }
-  }
-}
+    if(readSize == -1){
+      perror("recv failed");
+    }
 
-command_t handeleCommand(char *s)
-{
-  if (strcasecmp(s, "USER") == 0)
-    return USER;
+    memset(clientMessage,0,sizeof clientMessage);
 
-  if (strcasecmp(s, "TYPE") == 0)
-    return TYPE;
-
-  if (strcasecmp(s, "MODE") == 0)
-    return MODE;
-
-  if (strcasecmp(s, "STRU") == 0)
-    return STRU;
-
-  if (strcasecmp(s, "PASV") == 0)
-    return PASV;
-
-  if (strcasecmp(s, "NLST") == 0)
-
-    return NLST;
-
-  if (strcasecmp(s, "RETR") == 0)
-
-    return RETR;
-
-  if (strcasecmp(s, "CWD") == 0)
-
-    return CWD;
-
-  if (strcasecmp(s, "CDUP") == 0)
-
-    return CDUP;
-
-  if (strcasecmp(s, "QUIT") == 0)
-
-    return QUIT;
-
-  return INVALID;
-}
-
-void splitStr(char *s, char delim, char *arr[])
-{
-  printf("str: %s\n", s);
-  printf("c: %c\n", delim);
-  char *p = strtok(s, &delim);
-  int i = 0;
-
-  while (p != NULL)
-  {
-    arr[i++] = p;
-    p = strtok(NULL, &delim);
   }
 
-  for (i = 0; i < 4; ++i)
-    printf("%s\n", arr[i]);
 
-  return;
+
 }
 
-// void toUpper(char * s) {
-//   char * name;
-//   name = strtok(s,":");
 
-//   // Convert to upper case
-//   char *s = name;
-//   while (*s) {
-//     *s = toupper((unsigned char) *s);
-//     s++;
-//   }
-
-// }
